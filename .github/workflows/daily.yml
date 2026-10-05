@@ -1,0 +1,66 @@
+name: Daily citations
+on:
+  schedule:
+    # 03:23 Asia/Hong_Kong (19:23 UTC previous day)
+    - cron: '23 19 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: citation-pages
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run regression tests
+        run: python -m unittest discover -s tests -v
+      - name: Fetch counts and citing papers
+        id: fetch
+        continue-on-error: true
+        env:
+          SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}
+          OPENALEX_API_KEY: ${{ secrets.OPENALEX_API_KEY }}
+          SCHOLAR_URL: ${{ vars.SCHOLAR_URL || '' }}
+        run: python tracker.py
+      - name: Persist citation history and API usage
+        if: always() && steps.fetch.outcome != 'skipped'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/
+          if ! git diff --cached --quiet; then
+            git commit -m 'Update citation history [skip ci]'
+            git push origin HEAD:${{ github.event.repository.default_branch }}
+          fi
+      - name: Report API failure
+        if: steps.fetch.outcome == 'failure'
+        run: |
+          echo 'Citation fetch failed. Existing history is preserved. Check API credentials, quota and configuration.'
+          exit 1
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+  deploy:
+    needs: update
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy dashboard
+        id: deployment
+        uses: actions/deploy-pages@v4

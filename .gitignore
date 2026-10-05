@@ -1,0 +1,13 @@
+# Credentials
+.env
+.env.*
+!.env.example
+api.md
+*.pem
+# Generated dashboard and temporary files
+site/
+__pycache__/
+*.py[cod]
+*.tmp
+.DS_Store
+.venv/
