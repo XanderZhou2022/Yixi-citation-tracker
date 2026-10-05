@@ -260,6 +260,35 @@ class TrackerTests(unittest.TestCase):
         self.assertEqual(saved['works'], state['works'])
         self.assertEqual(saved['usage']['2026-10-06']['serpapi'], 1)
 
+    def test_exhausted_budget_reuses_snapshot_without_changing_saved_history(self):
+        store = app.Store(self.cfg)
+        state = self.first()
+        store.save(state)
+        class ExhaustedSources(MockSources):
+            def profile(inner):
+                raise app.BudgetExceeded('daily budget exhausted')
+        result = app.update_or_reuse(self.cfg, store, NOW, ExhaustedSources)
+        self.assertEqual(result['last_update'], state['last_update'])
+        self.assertEqual(result['works'], state['works'])
+        self.assertTrue(any('本次发布已有快照' in w for w in result['warnings']))
+        self.assertEqual(store.load(), state)
+
+    def test_exhausted_budget_without_snapshot_still_fails(self):
+        class ExhaustedSources(MockSources):
+            def profile(inner):
+                raise app.BudgetExceeded('daily budget exhausted')
+        with self.assertRaises(app.BudgetExceeded):
+            app.update_or_reuse(self.cfg, app.Store(self.cfg), NOW, ExhaustedSources)
+
+    def test_api_failure_is_not_treated_as_budget_pause(self):
+        store = app.Store(self.cfg)
+        store.save(self.first())
+        class FailedSources(MockSources):
+            def profile(inner):
+                raise app.TrackerError('SerpApi: HTTP 401')
+        with self.assertRaises(app.TrackerError):
+            app.update_or_reuse(self.cfg, store, NOW, FailedSources)
+
     def test_static_build_has_csv_and_no_credentials(self):
         from pathlib import Path
         output = Path(self.temp.name) / 'output'

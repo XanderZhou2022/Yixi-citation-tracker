@@ -465,6 +465,21 @@ def run_update(cfg, store, now=None, source_class=Sources):
     return candidate
 
 
+def update_or_reuse(cfg, store, now=None, source_class=Sources):
+    """A local budget pause can publish an existing snapshot without a new fetch."""
+    try:
+        return run_update(cfg, store, now, source_class)
+    except BudgetExceeded as exc:
+        state = store.load()
+        if not state.get('last_update'):
+            raise
+        # Deployment notice only: do not change the saved snapshot or its date.
+        state['warnings'] = list(dict.fromkeys(state.get('warnings', []) + [
+            str(exc) + '；本次发布已有快照，未刷新引用数据。'
+        ]))
+        return state
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--build-only', action='store_true', help='Build dashboard without API requests')
@@ -481,7 +496,7 @@ def main():
         else:
             if cfg.missing():
                 raise TrackerError('尚未配置：' + '、'.join(cfg.missing()))
-            state = run_update(cfg, store)
+            state = update_or_reuse(cfg, store)
         build_site(cfg, state, args.output)
         report = summary(state)
         print(report)
