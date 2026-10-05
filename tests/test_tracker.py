@@ -48,7 +48,7 @@ class TrackerTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.env = patch.dict(os.environ, {'SCHOLAR_URL': 'https://scholar.google.com/citations?user=test',
             'SERPAPI_KEY': 'private-serp-secret',
-            'OPENALEX_API_KEY': 'private-oa-secret',
+            'OPENALEX_API_KEY': 'private-oa-secret', 'DASHBOARD_PASSWORD': 'test-password-only-1234',
             'DATA_DIR': self.temp.name}, clear=True)
         self.env.start()
         self.cfg = app.Config()
@@ -289,17 +289,32 @@ class TrackerTests(unittest.TestCase):
         with self.assertRaises(app.TrackerError):
             app.update_or_reuse(self.cfg, store, NOW, FailedSources)
 
-    def test_static_build_has_csv_and_no_credentials(self):
+    def test_static_build_is_encrypted_and_has_no_credentials(self):
         from pathlib import Path
+        import base64
+        import hashlib
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
         output = Path(self.temp.name) / 'output'
+        output.mkdir()
+        (output / 'data.json').write_text('old plaintext')
+        (output / 'citations.csv').write_text('old plaintext')
         state = self.first()
         app.build_site(self.cfg, state, output)
-        payload = (output / 'data.json').read_text()
-        self.assertEqual(json.loads(payload)['author_id'], 'test')
-        self.assertTrue((output / 'citations.csv').read_bytes().startswith(b'\xef\xbb\xbf'))
-        self.assertTrue((output / 'index.html').exists())
-        for secret in (self.cfg.serp_key, self.cfg.openalex_key):
-            self.assertNotIn(secret, payload)
+        envelope = json.loads((output / 'data.enc.json').read_text())
+        key = hashlib.pbkdf2_hmac('sha256', os.environ['DASHBOARD_PASSWORD'].encode(),
+                                 base64.b64decode(envelope['salt']), envelope['iterations'], dklen=32)
+        payload = json.loads(AESGCM(key).decrypt(base64.b64decode(envelope['nonce']),
+                            base64.b64decode(envelope['ciphertext']), b'citation-v1'))
+        self.assertEqual(payload['data']['author_id'], 'test')
+        self.assertTrue(payload['csv'].startswith('\ufeff'))
+        self.assertFalse((output / 'data.json').exists())
+        self.assertFalse((output / 'citations.csv').exists())
+        for asset in ['index.html', 'app.js', 'auth.js', 'styles.css']:
+            self.assertTrue((output / asset).exists())
+        for path in output.rglob('*'):
+            if path.is_file():
+                for secret in (self.cfg.serp_key, self.cfg.openalex_key, os.environ['DASHBOARD_PASSWORD']):
+                    self.assertNotIn(secret.encode(), path.read_bytes())
 
     def test_incomplete_profile_is_not_accepted(self):
         source = app.Sources(self.cfg, app.blank_state(self.cfg), NOW.date().isoformat())

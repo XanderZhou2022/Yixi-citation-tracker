@@ -13,29 +13,51 @@
    | --- | --- |
    | `SERPAPI_KEY` | 你原 `api.md` 的 SerpApi 密钥 |
    | `OPENALEX_API_KEY` | 你原 `api.md` 的 OpenAlex 密钥 |
+   | `DASHBOARD_PASSWORD` | 你设置的网页访问密码，至少 12 个字符 |
+
+   **在 push 本次修改前，先添加 `DASHBOARD_PASSWORD`**：至少 12 个字符，建议使用密码管理器生成 20 位以上随机密码。这就是网页的访问密码。不要写进代码或 `config.json`。
 
    实际密钥没有复制进此目录。不要将 `api.md` 上传到 GitHub。OpenAlex 密钥可省略，但已建议配置以提高服务额度。
 3. **Settings → Actions → General → Workflow permissions** 选择 **Read and write permissions**，保存，使定时任务能将历史数据写回仓库。默认分支须允许 `github-actions[bot]` 直接提交；如果使用分支保护，请为此个人数据仓库调整规则。
 4. **Settings → Pages → Build and deployment → Source** 选择 **GitHub Actions**。
 5. **Actions → Daily citations → Run workflow** 手动运行一次。成功后在该次运行的 `deploy` job 或 **Settings → Pages** 查看网站 URL，通常为 `https://你的用户名.github.io/仓库名/`。
 
-`Checks and Pages` 在 push 时只测试、构建和发布已有数据，不调用收费 API。如果首次 push 发生在启用 Pages 之前，该次发布可能失败；按上述配置后运行 `Daily citations` 即可。Pull request 只测试与构建，不发布。
+`Checks and Pages` 在 push 时只测试、构建和发布已有数据，不调用收费 API。如果首次 push 发生在启用 Pages 之前，该次发布可能失败；按上述配置后运行 `Daily citations` 即可。Pull request 只运行离线测试，不读取部署密码、不发布。
 
 每日自动任务设为 **香港时间 03:23 / UTC 19:23**。GitHub 的 schedule 可能排队延迟，并非严格准点。定时工作流必须位于默认分支；fork 后要在 Actions 页面启用。公共仓库长期无活动时，GitHub 可能停用定时工作流。
 
-GitHub Pages 看板和 JSON/CSV 数据会公开；API 密钥仅在 Actions 的环境变量中使用。私有仓库使用 Pages 的可用性取决于 GitHub 账户方案。
+GitHub Pages 公开提供登录页和加密文件；输入正确密码才会解密并展示引用数据。API 密钥仅在 Actions 中用于抓取，不进入网站。你已选择保留现有公开历史，因此旧 Git 提交、旧网站快照或曾下载的数据仍可能被查看；此次加密不能撤回它们。
 
 ## 页面功能
 
-- 总引用数、相对前一个已记录日期的净变化、每篇论文引用数与扫描状态。
-- 每日历史曲线；只有首次快照时显示该日期引用数，不补造过去数据。
-- 引用详情：引用论文题目、论文链接、发现时间、它引用了你的哪篇论文、作者与作者对应单位。
-- 按目标论文、首次导入/后续新发现筛选，按题目、作者或单位搜索。
-- 引用作者、引用单位汇总；单位按不同引用论文去重。
-- 导出 UTF-8 BOM CSV，包含作者与单位的对应 JSON，适合 Excel 打开。
-- Actions 每次运行的 Summary 显示当日新发现的引用论文及作者单位。
+- 输入密码解锁；登录成功后用 cookie 记住此浏览器，退出会清除登录。
+- 总览显示引用统计与历史趋势；只有一个快照时显示一个点，不补造历史。
+- 我的论文逐篇折叠，展开查看该论文引用变化曲线，再次点击收起。
+- 引用详情选择你的某篇论文后显示引用它的论文；作者与单位默认折叠。
+- 引用论文所属单位与引用作者左右两栏；手机上自动上下排列。
+- OpenAlex / DOI 图标链接和解锁后的 CSV 导出。
+- 页面仅显示更新时间，不显示扫描状态、额度横幅或匹配说明文字。
 
-“刷新页面”读取已发布快照。需要立即抓取时，运行仓库的 `Daily citations` 工作流。
+“刷新页面”读取已发布快照。需要立即抓取时，运行仓库的 `Daily citations` 工作流。已匹配成功的 OpenAlex 元数据直接复用；未匹配、歧义或暂不可用的记录每七天重试。
+
+## 密码与加密
+
+`DASHBOARD_PASSWORD` 在 Actions 内通过 PBKDF2-SHA256（600,000 次）生成 AES-256-GCM 密钥。每次加密使用新的随机 nonce；Pages 只发布 `data.enc.json`，不发布明文 JSON 或 CSV。CSV 在登录后由浏览器生成。Actions 日志与 Summary 不再列出引用论文及作者单位。
+
+首次运行更新后的 `Daily citations` 时，会将当前 `data/state.json` 转为 `data/state.enc.json`，提交加密文件并删除当前版本的明文文件，保留你已同意公开的旧 Git 历史。**不要手动删除基线。** 本地仍保留旧基线，等待你设置真实密码后由工作流迁移。
+
+登录 cookie 保存派生的解密密钥，不保存原始密码。设置有效期为 400 天，登录会续期；浏览器提前清理、隐私模式、主动退出或更换密码都会要求重输。cookie 也是解密凭证，不应分享。静态 Pages 无法使用服务端 HttpOnly 会话或限制离线密码猜测，所以请用强随机密码；同一 `github.io` 来源下的其他页面应同样可信。
+
+`config.json` 的 `dashboard_salt` 是公开随机盐，不是密码。保持它不变，使每日更新后已有登录继续有效。
+
+更换密码时：
+
+1. 暂时创建 Secret `PREVIOUS_DASHBOARD_PASSWORD`，填旧密码。
+2. 将 `DASHBOARD_PASSWORD` 更新为新密码。
+3. 手动运行 `Daily citations`，确认成功且仓库已提交新的加密历史。
+4. 删除 `PREVIOUS_DASHBOARD_PASSWORD`。浏览器刷新后需要输入新密码。
+
+不要只改密码后删除加密历史；这会丢失追踪记录。新密码不能撤回别人已保存的旧明文或旧密码对应的加密快照。
 
 ## 数据口径
 
@@ -60,32 +82,27 @@ OpenAlex 提供**该篇引用论文的作者单位**，不代表作者当前单�
 | `max_cited_pages_per_paper` | 2 | 每篇论文每次扫描最多页数，每页 10 条 |
 | `reconcile_days` | 7 | 引用数不变时定期复查间隔 |
 
-每天先完整抓作者主页；引用数变化时扫描引用详情，每七天复查未变化的列表。未完成的分页在后续更新续抓，并按上次尝试时间轮换目标论文，避免高引用论文一直占用额度。当天额度保存在 `data/state.json`，同日重跑仍受限。6 次/日意味着常规每月最多约 186 次 SerpApi 请求；请按你的账户配额调整。首次本地初始化单独使用了 12 次上限，实际记账 10 次（其中包含本机证书连接失败的保守记账），后续自动任务使用默认 6 次。
+每天先完整抓作者主页；引用数变化时扫描引用详情，每七天复查未变化的列表。未完成的分页在后续更新续抓，并按上次尝试时间轮换目标论文，避免高引用论文一直占用额度。当天额度保存在加密的 `data/state.enc.json`，同日重跑仍受限。6 次/日意味着常规每月最多约 186 次 SerpApi 请求；请按你的账户配额调整。首次本地初始化单独使用了 12 次上限，实际记账 10 次（其中包含本机证书连接失败的保守记账），后续自动任务使用默认 6 次。
 
-首次初始化已经保存真实基线。推送时保留 `data/state.json`，以后就从此基线追踪新增引用。不要删除此文件来重新跑任务，否则会失去历史并重建基线。更换作者前备份旧数据，再移走 `data/state.json`；程序会拒绝将不同作者的数据混在一起。可选仓库 Variable `SCHOLAR_URL` 会覆盖 `config.json` 中的 URL。
+首次初始化已经保存真实基线。迁移前推送时保留 `data/state.json`，迁移后保留 `data/state.enc.json`，以后从此基线追踪新增引用。不要删除历史文件来重新跑任务，否则会失去历史并重建基线。更换作者前备份旧数据，再移走当前历史文件；程序会拒绝将不同作者的数据混在一起。可选仓库 Variable `SCHOLAR_URL` 会覆盖 `config.json` 中的 URL。
 
 ## 本地使用
 
-需要 Python 3.10+（Actions 使用 3.12），不需要第三方 Python 库。
+需要 Python 3.10+（Actions 使用 3.12），安装 `cryptography` 加密依赖。复制 `.env.example` 为 `.env`，填写 `DASHBOARD_PASSWORD`；需要抓取时再填写 API 密钥。`.env` 不提交。
 
 ```bash
-# 使用已有快照构建网站，无 API 调用
-python3 tracker.py --build-only
+# 安装依赖，使用已有快照构建网站，无 API 调用
+python3 -m pip install -r requirements.txt
+python3 tracker.py --env-file .env --build-only
 python3 -m http.server 8765 --bind 127.0.0.1 --directory site
 ```
 
 打开 http://127.0.0.1:8765/ 。不要直接双击 HTML，浏览器从 file:// 加载 JSON 可能被限制。
 
-抓取真实数据时，复制 `.env.example` 为 `.env`，填写两个密钥，然后执行：
+抓取真实数据时执行：
 
 ```bash
 python3 tracker.py --env-file .env
-```
-
-也可以直接使用原密钥文件：
-
-```bash
-python3 tracker.py --env-file /Users/zhou/Downloads/citation-intelligence/api.md
 ```
 
 此机器的 Python 默认 CA 文件缺失，本地验证采用系统可信证书。若出现证书连接失败，使用：
@@ -105,22 +122,24 @@ python3 -m unittest discover -s tests -v
 回归测试覆盖基线/新增去重、跨日变化、同日重跑、分页续抓、额度轮换、扫描中引用数变化、元数据匹配与歧义、失败时保留数据和额度、CSV 防公式及静态产物不泄露密钥。真实数据验证结果见 `VERIFICATION.md`。
 
 - **工作流 Fetch 失败**：检查 Secrets、Scholar URL 和额度。已有历史保留；已消耗的额度会提交回仓库；失败会显示在 Actions。
-- **Fetch 成功但单位缺失**：页面显示匹配状态，后续按规则重试。OpenAlex 收录缺失或作者单位为空并不意味着没有引用。
+- **Fetch 成功但单位缺失**：后续按规则重试，页面不显示技术匹配说明。OpenAlex 收录缺失或作者单位为空并不意味着没有引用。
 - **Persist 步骤失败**：检查工作流写权限和分支保护；不要删除历史文件来修复权限。
 - **Deploy 失败**：确认 Pages Source 是 GitHub Actions，且 workflow 的 `github-pages` environment 允许默认分支部署。
-- **当天重跑提示额度已用完**：若已有成功快照，任务继续发布该快照，页面提示本次未刷新数据；次日恢复抓取。若没有成功快照，则仍报错。也可根据账户额度提高配置。
+- **当天重跑提示额度已用完**：若已有成功快照，任务继续发布该快照，页面不显示额度提示，更新时间保持原值；次日恢复抓取。若没有成功快照，则仍报错。也可根据账户额度提高配置。
 - **更新计数后详情待查**：达到请求上限、列表暂空或分页尚未完成；已保存结果保留，后续更新继续。
 
 ## 文件布局
 
 ```text
 .github/workflows/daily.yml  每日抓取、提交历史、部署 Pages
-.github/workflows/check.yml  Push/PR 回归测试与 Push 发布
-config.json                 主页与额度配置，无密钥
+.github/workflows/check.yml  Push/PR 回归测试与 Push 加密发布
+config.json                 主页、额度与公开随机盐，无密钥
 tracker.py                  抓取、增量追踪、OpenAlex 补全、静态构建
-web/index.html              中文静态看板
-data/state.json            持久历史与已导入基线（必须提交）
-tests/test_tracker.py       离线行为回归测试
+web/                        登录、解密与中文看板 assets
+data/state.enc.json         迁移后的加密历史（必须保留）
+data/state.json             仅首次迁移前的已公开基线
+tests/                      离线行为与加密回归测试
+requirements.txt            Python 加密依赖
 .env.example                本地密钥格式，无真实密钥
 ```
 

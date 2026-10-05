@@ -2,6 +2,7 @@
 """Daily Scholar tracker and GitHub Pages builder. Python standard library only."""
 from __future__ import annotations
 import argparse
+import base64
 import copy
 import csv
 import hashlib
@@ -122,22 +123,44 @@ class Store:
     """Atomic local canonical state, committed to Git by the daily workflow."""
     def __init__(self, cfg):
         self.cfg = cfg
-        self.local_file = cfg.data_dir / 'state.json'
+        self.local_file = cfg.data_dir / 'state.enc.json'
+        self.legacy_file = cfg.data_dir / 'state.json'
+        self.needs_rekey = False
 
     def load(self):
-        if not self.local_file.exists():
+        path = self.local_file if self.local_file.exists() else self.legacy_file
+        if not path.exists():
             return blank_state(self.cfg)
         try:
-            return validate_state(json.loads(self.local_file.read_text(encoding='utf-8')), self.cfg)
+            data = json.loads(path.read_text(encoding='utf-8'))
+            if path == self.local_file:
+                try:
+                    data = decrypt_payload(data, dashboard_password())
+                    self.needs_rekey = False
+                except TrackerError:
+                    previous = os.getenv('PREVIOUS_DASHBOARD_PASSWORD', '')
+                    if not previous:
+                        raise
+                    data = decrypt_payload(data, previous)
+                    self.needs_rekey = True
+            return validate_state(data, self.cfg)
         except (ValueError, OSError):
             raise TrackerError('数据读取失败；不会覆盖已有文件') from None
 
     def save(self, state):
+        password = dashboard_password()
+        if self.local_file.exists():
+            same_state = self.load() == state
+            if same_state and not self.needs_rekey:
+                return
+        envelope = encrypt_payload(state, password, dashboard_salt())
         self.cfg.data_dir.mkdir(parents=True, exist_ok=True)
         temp = self.local_file.with_suffix('.tmp')
         try:
-            temp.write_text(json.dumps(state, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+            temp.write_text(json.dumps(envelope) + '\n', encoding='utf-8')
             temp.replace(self.local_file)
+            self.legacy_file.unlink(missing_ok=True)
+            self.needs_rekey = False
         except OSError:
             raise TrackerError('数据保存失败') from None
 
@@ -412,11 +435,58 @@ def public_view(cfg, state):
 
 
 def build_site(cfg, state, output):
+    password = dashboard_password()
+    salt = dashboard_salt()
+    payload = {'data': public_view(cfg, state), 'csv': export_csv(state).decode('utf-8')}
+    envelope = encrypt_payload(payload, password, salt)
     output.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(ROOT / 'web' / 'index.html', output / 'index.html')
-    (output / 'data.json').write_text(json.dumps(public_view(cfg, state), ensure_ascii=False) + '\n', encoding='utf-8')
-    (output / 'citations.csv').write_bytes(export_csv(state))
+    # Remove earlier plaintext exports when rebuilding into an existing directory.
+    for name in ('data.json', 'citations.csv'):
+        (output / name).unlink(missing_ok=True)
+    for source in (ROOT / 'web').rglob('*'):
+        if source.is_file():
+            target = output / source.relative_to(ROOT / 'web')
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
+    (output / 'data.enc.json').write_text(json.dumps(envelope) + '\n', encoding='utf-8')
     (output / '.nojekyll').touch()
+
+
+def encrypt_payload(payload, password, salt):
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    iterations = 600_000
+    key = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, iterations, dklen=32)
+    nonce = os.urandom(12)
+    ciphertext = AESGCM(key).encrypt(nonce, json.dumps(payload, ensure_ascii=False).encode('utf-8'), b'citation-v1')
+    encode = lambda value: base64.b64encode(value).decode('ascii')
+    return {'format': 'citation-aesgcm-v1', 'iterations': iterations,
+            'salt': encode(salt), 'nonce': encode(nonce), 'ciphertext': encode(ciphertext)}
+
+
+def dashboard_password():
+    password = os.getenv('DASHBOARD_PASSWORD', '')
+    if len(password) < 12:
+        raise TrackerError('请设置 DASHBOARD_PASSWORD Secret，密码至少 12 个字符；不会发布未加密数据。')
+    return password
+
+
+def dashboard_salt():
+    return bytes.fromhex(json.loads((ROOT / 'config.json').read_text())['dashboard_salt'])
+
+
+def decrypt_payload(envelope, password):
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from cryptography.exceptions import InvalidTag
+    try:
+        if envelope.get('format') != 'citation-aesgcm-v1' or envelope.get('iterations') != 600_000:
+            raise ValueError
+        salt = base64.b64decode(envelope['salt'], validate=True)
+        key = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, envelope['iterations'], dklen=32)
+        plain = AESGCM(key).decrypt(base64.b64decode(envelope['nonce'], validate=True),
+                                    base64.b64decode(envelope['ciphertext'], validate=True), b'citation-v1')
+        return json.loads(plain)
+    except (InvalidTag, ValueError, KeyError, TypeError):
+        raise TrackerError('加密历史无法解密：请检查 DASHBOARD_PASSWORD；不会覆盖历史。') from None
 
 
 def summary(state):
@@ -447,7 +517,7 @@ def load_env_file(path):
         if not line.strip() or line.lstrip().startswith('#'):
             continue
         key, sep, value = line.partition('=')
-        if sep and key.strip() in ('SERPAPI_KEY', 'OPENALEX_API_KEY', 'SCHOLAR_URL'):
+        if sep and key.strip() in ('SERPAPI_KEY', 'OPENALEX_API_KEY', 'SCHOLAR_URL', 'DASHBOARD_PASSWORD', 'PREVIOUS_DASHBOARD_PASSWORD'):
             os.environ.setdefault(key.strip(), value.strip().strip('\"\''))
 
 
@@ -490,6 +560,7 @@ def main():
         if args.env_file:
             load_env_file(args.env_file)
         cfg = Config()
+        dashboard_password()
         store = Store(cfg)
         if args.build_only:
             state = store.load()
@@ -498,7 +569,7 @@ def main():
                 raise TrackerError('尚未配置：' + '、'.join(cfg.missing()))
             state = update_or_reuse(cfg, store)
         build_site(cfg, state, args.output)
-        report = summary(state)
+        report = 'Encrypted citation dashboard built.\n' + f"Pending tasks: {len(state.get('warnings', []))}.\n"
         print(report)
         if os.getenv('GITHUB_STEP_SUMMARY'):
             with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as file:

@@ -25,6 +25,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
       - name: Run regression tests
         run: python -m unittest discover -s tests -v
       - name: Fetch counts and citing papers
@@ -33,6 +35,8 @@ jobs:
         env:
           SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}
           OPENALEX_API_KEY: ${{ secrets.OPENALEX_API_KEY }}
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          PREVIOUS_DASHBOARD_PASSWORD: ${{ secrets.PREVIOUS_DASHBOARD_PASSWORD }}
           SCHOLAR_URL: ${{ vars.SCHOLAR_URL || '' }}
         run: python tracker.py
       - name: Persist citation history and API usage
