@@ -1,4 +1,4 @@
-import { initializeAuth, loadSnapshot, logout } from './auth.js';
+import { initializeAuth, logout } from './auth.js';
 
 const $ = id => document.getElementById(id);
 let data, items = [];
@@ -38,8 +38,7 @@ function card({work:w, edge:e}) {
     const units = (a.institutions || []).map(i=>i.name).join(' · ') || (a.raw_affiliations || []).join(' · ');
     return `<div class="author"><span class="author-name">${esc(a.name)}</span><span class="author-unit">${esc(units || '—')}</span></div>`;
   }).join('') || `<div class="author-raw">${esc(w.authors_text || '—')}</div>`;
-  const n = w.authors?.length;
-  return `<article class="citation"><div class="citation-heading"><h3>${link(w.url,w.title)}</h3><div class="source-links">${sourceLink(w.openalex_id,'OpenAlex','openalex')}${sourceLink(w.doi,'DOI','doi')}</div></div><div class="citation-meta"><span>${esc(w.year || '—')}</span><span>${esc(e.detected_at.slice(0,10))}</span>${e.is_baseline?'':'<span class="new-badge">新增</span>'}</div><details class="author-details"><summary>${icons.chevron} 作者与单位${n?` <span>(${n})</span>`:''}</summary><div class="authors">${authorLines}</div></details></article>`;
+  return `<details class="citation"><summary class="citation-row"><h3>${link(w.url,w.title)}</h3><div class="citation-meta"><span>${esc(e.detected_at.slice(0,10))}</span>${e.is_baseline?'':'<span class="new-badge">新增</span>'}</div><div class="source-links">${sourceLink(w.openalex_id,'OpenAlex','openalex')}${sourceLink(w.doi,'DOI','doi')}</div></summary><div class="authors">${authorLines}</div></details>`;
 }
 function counts() {
   const institutions=Object.create(null), authors=Object.create(null);
@@ -49,16 +48,65 @@ function counts() {
   }
   return {institutions,authors};
 }
-function ranking(map,id) {
+const PAGE_SIZE=10;
+const rankingPages = {institutions: 1, authors: 1, citations: 1, papers: 1};
+function paginate(kind, count, elementId, label) {
+  const size=PAGE_SIZE;
+  const pages=Math.max(1,Math.ceil(count/size));
+  const page=rankingPages[kind]=Math.max(1,Math.min(rankingPages[kind],pages));
+  $(elementId).innerHTML=Array.from({length:pages},(_,i)=>`<button data-pagination="${kind}" data-page="${i+1}" aria-label="${label}第 ${i+1} 页" ${page===i+1?'class="current" aria-current="page"':''}>${i+1}</button>`).join('');
+  return (page-1)*size;
+}
+let rankingMaps;
+function ranking(map, id, kind) {
   const rows=Object.entries(map).map(([name,works])=>[name,works.size]).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]));
   const max=rows[0]?.[1]||1;
-  $(id).innerHTML=rows.map(([name,n])=>`<div class="rank-row"><div class="rank-heading"><span>${esc(name)}</span><strong>${n}</strong></div><div class="rank-bar"><i style="width:${100*n/max}%"></i></div></div>`).join('') || empty('暂无记录');
+  const start=paginate(kind,rows.length,kind==='institutions'?'institution-pagination':'author-pagination',kind==='institutions'?'单位':'作者');
+  $(id).innerHTML=rows.slice(start,start+PAGE_SIZE).map(([name,n],index)=>{
+    let heading=`<span>${esc(name)}</span><strong>${n}</strong>`, expanded='';
+    if(kind==='authors') {
+      const works=[...map[name]].map(workId=>data.works[workId]).filter(Boolean);
+      const unit=works.flatMap(w=>(w.authors||[]).filter(a=>a.name===name)).map(a=>(a.institutions||[])[0]?.name || (a.raw_affiliations||[])[0]).find(Boolean);
+      const listId=`author-works-${start+index}`;
+      heading=`<span>${esc(name)}${unit?` <span class="rank-affiliation">(${esc(unit)})</span>`:''}</span><button class="rank-count" data-author-toggle aria-expanded="false" aria-controls="${listId}" aria-label="展开 ${esc(name)} 的 ${n} 篇论文">${n}</button>`;
+      expanded=`<div id="${listId}" class="rank-works" hidden>${works.map(w=>`<div>${link(w.url||w.doi||w.openalex_id,w.title)}</div>`).join('')}</div>`;
+    }
+    return `<div class="rank-row"><div class="rank-heading">${heading}</div><div class="rank-bar"><i style="width:${100*n/max}%"></i></div>${expanded}</div>`;
+  }).join('') || empty('暂无记录');
 }
+document.addEventListener('click',event=>{
+  const toggle=event.target.closest('button[data-author-toggle]');
+  if(toggle) {
+    const list=toggle.closest('.rank-row').querySelector('.rank-works');
+    list.hidden=!list.hidden;toggle.setAttribute('aria-expanded',String(!list.hidden));toggle.setAttribute('aria-label',toggle.getAttribute('aria-label').replace(/^(展开|收起)/,list.hidden?'展开':'收起'));return;
+  }
+  const button=event.target.closest('button[data-pagination]');if(!button)return;
+  const kind=button.dataset.pagination;
+  rankingPages[kind]=Number(button.dataset.page);
+  if(kind==='citations') renderCitations();
+  else if(kind==='papers') renderPapers();
+  else ranking(rankingMaps[kind],kind==='institutions'?'institution-list':'author-list',kind);
+});
 function renderCitations() {
   const target=$('target').value;
   const filtered=items.filter(x=>x.edge.target_id===target);
   $('result-count').textContent=`${filtered.length} 篇引用`;
-  $('citation-list').innerHTML=filtered.map(card).join('') || empty('暂无引用');
+  const start=paginate('citations',filtered.length,'citation-pagination','引用');
+  $('citation-list').innerHTML=filtered.slice(start,start+PAGE_SIZE).map(card).join('') || empty('暂无引用');
+}
+function renderPapers() {
+  const current=Object.values(data.papers).filter(p=>p.in_current_profile);
+  const start=paginate('papers',current.length,'paper-pagination','论文');
+  const cutoff=new Date(data.last_update.slice(0,10)+'T00:00:00Z');
+  cutoff.setUTCDate(cutoff.getUTCDate()-15);
+  const cutoffDate=cutoff.toISOString().slice(0,10);
+  $('paper-rows').innerHTML=current.slice(start,start+PAGE_SIZE).map(p=>{
+    const points=data.history.filter(h=>Object.hasOwn(h.papers,p.id)).map(h=>({date:h.date,value:h.papers[p.id]}));
+    const baseline=points.filter(point=>point.date<=cutoffDate).at(-1) || points[0];
+    const change=baseline?Number(p.citations)-Number(baseline.value):null;
+    const changeText=change===null?'—':`${change>0?'+':''}${change}`;
+    return `<details class="paper-trend"><summary class="paper-grid"><span class="paper-title">${link(p.url,p.title)}</span><span class="paper-value"><span class="metric-label">引用</span>${p.citations}</span><span class="paper-value ${change>0?'up':''}"><span class="metric-label">近15日变化</span>${changeText}</span></summary><div class="paper-chart">${graph(points,p.title+' 引用趋势')}</div></details>`;
+  }).join('') || empty('暂无论文');
 }
 function render() {
   const current=Object.values(data.papers).filter(p=>p.in_current_profile);
@@ -68,35 +116,27 @@ function render() {
   $('update').textContent=data.last_update?`更新于 ${dateText(data.last_update)}`:'';
   $('total').textContent=data.profile.metrics?.citations ?? '—';
   $('papers-count').textContent=current.length;
-  $('events').textContent=items.filter(x=>!x.edge.is_baseline).length;
+  const weekDate=new Date(data.last_update.slice(0,10)+'T00:00:00Z');
+  weekDate.setUTCDate(weekDate.getUTCDate()-7);
+  const weekBaseline=data.history.filter(h=>h.date<=weekDate.toISOString().slice(0,10)).at(-1) || data.history[0];
+  const weekDelta=weekBaseline?Number(data.profile.metrics?.citations||0)-Number(weekBaseline.total):null;
+  $('events').textContent=weekDelta===null?'—':`${weekDelta>0?'+':''}${weekDelta}`;
   $('inst-count').textContent=Object.keys(maps.institutions).length;
-  const prior=data.history.filter(h=>h.date<data.last_update.slice(0,10)).at(-1);
-  const delta=prior?Number(data.profile.metrics?.citations||0)-Number(prior.total):null;
-  $('net').textContent=delta===null?'—':`${delta>0?'+':''}${delta}`;
   if(safeURL(data.profile.url)){$('scholar').href=safeURL(data.profile.url);$('scholar').hidden=false;}
   $('chart').innerHTML=graph(data.history.map(h=>({date:h.date,value:h.total})),'总引用数趋势');
   $('recent').innerHTML=items.filter(x=>!x.edge.is_baseline).slice(0,5).map(card).join('') || empty('暂无新增引用');
   const selected=$('target').value;
   $('target').innerHTML=current.map(p=>`<option value="${esc(p.id)}">${esc(p.title)}</option>`).join('');
   if(current.some(p=>p.id===selected)) $('target').value=selected;
-  $('paper-rows').innerHTML=current.map(p=>{
-    const points=data.history.filter(h=>Object.hasOwn(h.papers,p.id)).map(h=>({date:h.date,value:h.papers[p.id]}));
-    const date=points.at(-1)?.date || '';
-    return `<details class="paper-trend"><summary class="paper-grid"><span class="paper-title">${link(p.url,p.title)}</span><span class="paper-value"><span class="metric-label">引用</span>${p.citations}</span><span class="paper-value ${p.delta>0?'up':''}"><span class="metric-label">变化</span>${p.delta>0?'+':''}${p.delta||0}</span><span class="paper-date"><span class="metric-label">更新时间</span>${esc(date)}</span>${icons.chevron}</summary><div class="paper-chart">${graph(points,p.title+' 引用趋势')}</div></details>`;
-  }).join('') || empty('暂无论文');
-  ranking(maps.institutions,'institution-list'); ranking(maps.authors,'author-list');renderCitations();
-}
-async function refresh() {
-  try { const payload=await loadSnapshot(); data=payload.data; window.citationCSV=payload.csv;render();$('error').hidden=true; }
-  catch { $('error').textContent='暂时无法读取数据，请稍后重试。';$('error').hidden=false; }
+  renderPapers();
+  rankingMaps=maps;ranking(maps.institutions,'institution-list','institutions'); ranking(maps.authors,'author-list','authors');renderCitations();
 }
 $('nav').addEventListener('click',e=>{
   const button=e.target.closest('button[data-tab]');if(!button)return;
   for(const b of $('nav').querySelectorAll('button')){b.classList.toggle('active',b===button);if(b===button)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');}
   for(const tab of document.querySelectorAll('.tab'))tab.hidden=tab.id!==button.dataset.tab;
 });
-$('target').addEventListener('change',renderCitations);
-$('reload').addEventListener('click',refresh);
+$('target').addEventListener('change',()=>{rankingPages.citations=1;renderCitations();});
 $('logout').addEventListener('click',logout);
 $('export').addEventListener('click',()=>{
   const url=URL.createObjectURL(new Blob([window.citationCSV || ''],{type:'text/csv;charset=utf-8'}));

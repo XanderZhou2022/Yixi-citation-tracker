@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <title>Citation · Yixi Zhou</title>
+  <link rel="icon" href="favicon.ico" sizes="32x32">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Roboto+Slab:wght@400;500;600&display=swap" rel="stylesheet">
@@ -24,22 +25,20 @@
   </section>
   <main id="dashboard" hidden>
     <header class="site-header">
-      <div><p class="eyebrow">CITATION TRACKER</p><h1 id="profile">Yixi Zhou</h1><p id="update" class="muted"></p></div>
+      <div class="identity"><p class="eyebrow">CITATION TRACKER</p><h1 id="profile">Yixi Zhou</h1><p id="update" class="muted"></p></div>
+    <section class="stats" aria-label="引用统计">
+      <div class="stat"><span>总引用</span><strong id="total">—</strong></div>
+      <div class="stat"><span>我的论文</span><strong id="papers-count">—</strong></div>
+      <div class="stat"><span>近7日变化</span><strong id="events">—</strong></div>
+      <div class="stat"><span>引用单位</span><strong id="inst-count">—</strong></div>
+    </section>
       <div class="actions">
         <button id="export" class="text-action">导出 CSV</button>
         <a id="scholar" class="text-action" target="_blank" rel="noopener noreferrer" hidden>Scholar ↗</a>
-        <button id="reload" class="icon-button" aria-label="刷新页面" title="刷新页面">↻</button>
         <button id="logout" class="text-action">退出</button>
       </div>
     </header>
     <p id="error" role="alert" hidden></p>
-    <section class="stats" aria-label="引用统计">
-      <div class="stat"><span>总引用</span><strong id="total">—</strong></div>
-      <div class="stat"><span>引用变化</span><strong id="net">—</strong></div>
-      <div class="stat"><span>我的论文</span><strong id="papers-count">—</strong></div>
-      <div class="stat"><span>新增引用</span><strong id="events">—</strong></div>
-      <div class="stat"><span>引用单位</span><strong id="inst-count">—</strong></div>
-    </section>
     <nav id="nav" aria-label="看板导航">
       <button class="active" data-tab="overview" aria-current="page">总览</button>
       <button data-tab="papers">我的论文</button>
@@ -52,18 +51,18 @@
     </section>
     <section id="papers" class="tab" hidden>
       <div class="panel paper-panel">
-        <div class="paper-grid table-heading"><span>论文</span><span>引用</span><span>变化</span><span>更新时间</span><span></span></div>
-        <div id="paper-rows"></div>
+        <div class="paper-grid table-heading"><span>论文</span><span>引用</span><span>近15日变化</span></div>
+        <div id="paper-rows"></div><div id="paper-pagination" class="pagination" aria-label="论文列表分页"></div>
       </div>
     </section>
     <section id="citations" class="tab" hidden>
       <div class="filters"><label for="target">我的论文</label><select id="target"></select><span id="result-count" class="muted"></span></div>
-      <div class="panel citation-panel" id="citation-list"></div>
+      <div class="panel citation-panel"><div id="citation-list"></div><div id="citation-pagination" class="pagination" aria-label="引用列表分页"></div></div>
     </section>
     <section id="institutions" class="tab" hidden>
       <div class="two-columns">
-        <div class="panel"><div class="section-title"><h2>引用论文所属单位</h2></div><div id="institution-list"></div></div>
-        <div class="panel"><div class="section-title"><h2>引用作者</h2></div><div id="author-list"></div></div>
+        <div class="panel"><div class="section-title"><h2>引用论文所属单位</h2></div><div id="institution-list"></div><div id="institution-pagination" class="pagination" aria-label="单位列表分页"></div></div>
+        <div class="panel"><div class="section-title"><h2>引用作者</h2></div><div id="author-list"></div><div id="author-pagination" class="pagination" aria-label="作者列表分页"></div></div>
       </div>
     </section>
   </main>
